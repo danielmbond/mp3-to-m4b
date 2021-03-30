@@ -1,5 +1,5 @@
 Clear-Host
-# ffmpeg needs to be in your path environment variable or you'll need to put the full path to it
+
 <#
 Get count of files in directories.
 set-location d:\books
@@ -14,8 +14,9 @@ foreach ($dir in $dirs) {
 }
 #>
 
-$start_path = "D:\books\Vince Flynn\Executive Power"
-$temp_path = "F:\temp"
+$START_PATH = "D:\books\Cassandra Clare\City of Ashes"
+$TEMP_PATH = "f:\temp"
+$DELETE_OLD_MP3 = $true
 
 #region Taglib
 $MODULE_PATH = "C:\Program Files\WindowsPowerShell\Modules\"
@@ -54,56 +55,105 @@ Function Remove-InvalidFileNameChars {
   return ($Name -replace $re)
 }
 
+Function Check-FileNameLengths($files) {
+    $length_previous = $files[0].FullName.Length
+    foreach ($file in $files) {
+        $length = $file.FullName.Length 
+        if ($length -ne $length_previous) {
+            return "Filenames are different lengths and might not sort and combine correctly."
+        }
+    }
+    return $true
+}
+
+Function Get-MP3Duration($file) {
+    # This doesn't work.  Was going to do it to create an ffmetadata file to add chapters.
+    $command = "ffprobe -v error -select_streams a:0 -show_entries stream=duration -of default=noprint_wrappers=1:nokey=1 `"$file`""
+    $duration = Invoke-Command $command
+    return $duration
+}
+
 # If there are no subfolders use the base path
-$bookDirs = Get-ChildItem -Path $start_path -Recurse | ?{ $_.PSIsContainer }
+$bookDirs = Get-ChildItem -Path $START_PATH -Recurse | ?{ $_.PSIsContainer }
 if ($bookDirs.count -lt 2) {
-    $bookDirs = $start_path
+    $bookDirs = $START_PATH
 }
 
 $files = ""
 $bookDirs
+$firstRun = $true
+$hasCoverArt = $false
+
 foreach ($bookDir in $bookDirs) {
     if ($bookDir.Fullname) {
         $bookDir = $bookDir.FullName
     }
+
     if ($bookDir.EndsWith("\") -eq $false) {
         $bookDir = "$bookDir\"
     }
 
-    if (!$temp_path) {
-        $temp_path = $bookDir
+    if (!$TEMP_PATH) {
+        $TEMP_PATH = $bookDir
     }
 
     $album = $null
     
     Set-Location $bookDir
     $mp3s = Get-ChildItem $bookDir -Filter *.mp3
+    $mp3sNameLength = Check-FileNameLengths $mp3s
+
+    if ($mp3sNameLength -ne $true) {
+        Write-Host $mp3sNameLength
+        break;
+    }
+
     $album = Remove-InvalidFileNameChars ($mp3s[0] | get-album)
     $albumMp3 = "$($album)-temp.mp3"
+    $albumM4a = "$album.m4a"
     $albumM4b = "$album.m4b"
     $mp3sList = $null
     foreach ($i in $mp3s) {$mp3sList = "$mp3sList|$i"}
     $mp3sList = $mp3sList.Trim("|")
 
-    if (Test-Path "$temp_path\$albumMp3") {
-        Write-Host "File exists @ $temp_path\$albumMp3"
+    if (Test-Path "$TEMP_PATH\$albumMp3") {
+        Write-Host "File exists @ $TEMP_PATH\$albumMp3"
         break;
     }
-    $command = "ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$temp_path\$albumMp3`""
+
+    Write-Host "Get cover art."
+    $hasCoverArt = $mp3s[0] | save-picture "$TEMP_PATH\cover.jpg"
+
+    Write-Host "Combining files."
+    $command = "ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`""
     $command
     Invoke-Expression $Command
-    
-    $command = "ffmpeg -fflags +igndts -i `"$temp_path\$albumMp3`" -vn -c:a aac -q:a 1 -y `"$temp_path\$albumM4b`""
+
+    Write-Host "Converting to m4b."
+    $command = "ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.3 -y `"$TEMP_PATH\$albumM4b`""
     $command = $Command.Replace("\\","\")
     $command
     Invoke-Expression $Command
-    
-    # Clean up
-    if (Test-Path "$temp_path\$albumM4b") {
-        Remove-Item "$temp_path\$albumMp3" 
-        foreach ($mp3 in $mp3s) {
-            Remove-Item $mp3.FullName
+
+    if ($hasCoverArt) {
+        write-host "Adding Cover Art"
+        Get-ChildItem "$TEMP_PATH\$albumM4b" | set-picture $hasCoverArt
+    }
+
+    $title = Get-ChildItem "$TEMP_PATH\$albumM4b" | get-album
+    (Get-ChildItem "$TEMP_PATH\$albumM4b") | set-title $title
+
+# Clean up
+    if (Test-Path "$TEMP_PATH\$albumM4b") {
+        Remove-Item "$TEMP_PATH\$albumMp3" 
+        if ($DELETE_OLD_MP3) {
+            foreach ($mp3 in $mp3s) {
+                Remove-Item $mp3.FullName
+            }
         }
-        Move-Item -Path "$temp_path\$albumM4b" -Destination "$bookDir\$albumM4b"
+        Move-Item -Path "$TEMP_PATH\$albumM4b" -Destination "$bookDir\$albumM4b"
+    }
+    if (Test-Path $hasCoverArt) {
+        Remove-Item $hasCoverArt
     }
 }
