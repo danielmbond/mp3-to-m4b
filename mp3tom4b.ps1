@@ -14,9 +14,11 @@ foreach ($dir in $dirs) {
 }
 #>
 
-$START_PATH = "D:\books\Vince Flynn"
+$START_PATH = "D:\books\Angus Watson"
 $TEMP_PATH = "F:\temp"
 $DELETE_OLD_MP3 = $true
+
+$FFMPEG_ERROR_LEVEL ="-hide_banner -loglevel error"
 
 #region Taglib
 if ($env:PSModulePath) {
@@ -89,11 +91,16 @@ if ($bookDirs.count -lt 2) {
 }
 
 $files = ""
-$bookDirs
 $firstRun = $true
 $hasCoverArt = $false
 
+write-host "Processing`r`n$bookDirs"
+
 foreach ($bookDir in $bookDirs) {
+    if ($mp3s) {
+        $mp3s.Clear()
+    }
+
     if ($bookDir.Fullname) {
         $bookDir = $bookDir.FullName
     }
@@ -131,42 +138,46 @@ foreach ($bookDir in $bookDirs) {
     }
 
     Write-Host "Get cover art."
-    $hasCoverArt = $mp3s[0] | save-picture "$TEMP_PATH\cover.jpg"
+    if ($mp3s) {
+        $hasCoverArt = $mp3s[0] | save-picture "$TEMP_PATH\cover.jpg"
 
-    Write-Host "Combining files."
-    $command = ("ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`"").Replace("\\","\")
-    $command
-    Invoke-Expression $Command
+        Write-Host "Combining files."
+        $command = ("ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
+        $command
+        Invoke-Expression $Command
 
-    Write-Host "Converting to m4b."
-    $command = ("ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.2 -y `"$TEMP_PATH\$albumM4b`"").Replace("\\","\")
-    $command
-    Invoke-Expression $Command
+        Write-Host "Converting to m4b."
+        $command = ("ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.2 -y `"$TEMP_PATH\$albumM4b`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
+        $command
+        Invoke-Expression $Command
 
-    $finalBook = Get-ChildItem "$TEMP_PATH\$albumM4b" 
-    if ($hasCoverArt) {
-        write-host "Adding Cover Art"
-        Get-ChildItem $finalBook | set-picture $hasCoverArt
-    }
-
-    $finalBook | set-title $album
-    $finalBook | set-track 1 1
-    $finalBook | set-disc 1 1
-
-# Clean up
-    if (Test-Path "$TEMP_PATH\$albumM4b") {
-        Remove-Item "$TEMP_PATH\$albumMp3" 
-        if ($DELETE_OLD_MP3) {
-            foreach ($mp3 in $mp3s) {
-                Remove-Item $mp3.FullName
-            }
+        $finalBook = Get-ChildItem "$TEMP_PATH\$albumM4b" 
+        if ($hasCoverArt) {
+            write-host "Adding Cover Art"
+            Get-ChildItem $finalBook | set-picture $hasCoverArt
         }
-        Move-Item -Path "$TEMP_PATH\$albumM4b" -Destination "$bookDir\$albumM4b"
-    }
+
+        $finalBook | set-title $album
+        $finalBook | set-track 1 1
+        $finalBook | set-disc 1 1
+
+    # Clean up
+        if (Test-Path "$TEMP_PATH\$albumM4b") {
+            Remove-Item "$TEMP_PATH\$albumMp3" 
+            if ($DELETE_OLD_MP3) {
+                foreach ($mp3 in $mp3s) {
+                    Remove-Item $mp3.FullName
+                }
+            }
+            Move-Item -Path "$TEMP_PATH\$albumM4b" -Destination "$bookDir\$albumM4b"
+        }
     
-    if ($hasCoverArt -and (Test-Path $hasCoverArt)) {
-        Remove-Item $hasCoverArt
+        if ($hasCoverArt -and (Test-Path $hasCoverArt)) {
+            Remove-Item $hasCoverArt
+        } else {
+            Write-Host "Cover art is missing for $bookDir\$albumM4b"
+        }
     } else {
-        write-host "Cover art is missing for $bookDir\$albumM4b"
+        Write-Host "Nothing to process in $bookDir."
     }
 }
