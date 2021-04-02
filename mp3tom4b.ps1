@@ -2,7 +2,7 @@ Clear-Host
 
 # ffmpeg needs to be in your path environment variable or you'll need to put the full path to it
 
-$START_PATH = "D:\books"
+$START_PATH = "D:\books\"
 $TEMP_PATH = "F:\temp"
 $DELETE_OLD_MP3 = $true
 $FFMPEG_ERROR_LEVEL = "-nostats -loglevel error"
@@ -44,35 +44,7 @@ if ((Test-Path $TAGLIB_PATH) -eq $false) {
 Import-Module taglib | Out-Null
 #endregion
 
-Function Get-File-Counts($location) {
-    # Get count of files in directories.
-    # $location = "d:\books"
-    set-location $location
-    Remove-Item "$location\filecounts.txt"
-    $dirs = Get-ChildItem -recurse | ?{ $_.PSIsContainer } 
-    foreach ($dir in $dirs) {
-        $count = (Get-ChildItem $dir.FullName | Measure-Object).Count
-        if ($count -gt 5) {
-            Write-Host "$count $dir"
-            "$count $($dir.FullName)" | Out-File "$location\filecounts.txt" -Append
-        }
-    }
-}
-
-Function Remove-InvalidFileNameChars {
-  param(
-    [Parameter(Mandatory=$true,
-      Position=0,
-      ValueFromPipeline=$true,
-      ValueFromPipelineByPropertyName=$true)]
-    [String]$Name
-  )
-
-  $invalidChars = [IO.Path]::GetInvalidFileNameChars() -join ''
-  $re = "[{0}]" -f [RegEx]::Escape($invalidChars)
-  return ($Name -replace $re)
-}
-
+#region Functions
 Function Check-FileNameLengths($files) {
     $length_previous = $files[0].FullName.Length
     foreach ($file in $files) {
@@ -83,13 +55,6 @@ Function Check-FileNameLengths($files) {
         }
     }
     return $true
-}
-
-Function Get-MP3Duration($file) {
-    # This doesn't work.  Was going to do it to create an ffmetadata file to add chapters.
-    $command = "ffprobe -v error -select_streams a:0 -show_entries stream=duration -of default=noprint_wrappers=1:nokey=1 `"$file`""
-    $duration = Invoke-Command $command
-    return $duration
 }
 
 Function Download-Pic-From-Audible([string]$searchterm) {
@@ -113,15 +78,48 @@ Function Download-Pic-From-Audible([string]$searchterm) {
     } else {
         return $false
     }
-    #break
 }
 
+Function Get-File-Counts($location) {
+    # Get count of files in directories.
+    # $location = "d:\books"
+    set-location $location
+    Remove-Item "$location\filecounts.txt"
+    $dirs = Get-ChildItem -recurse | ?{ $_.PSIsContainer } 
+    foreach ($dir in $dirs) {
+        $count = (Get-ChildItem $dir.FullName | Measure-Object).Count
+        if ($count -gt 5) {
+            Write-Host "$count $dir"
+            "$count $($dir.FullName)" | Out-File "$location\filecounts.txt" -Append
+        }
+    }
+}
+
+Function Get-MP3Duration($file) {
+    # This doesn't work.  Was going to do it to create an ffmetadata file to add chapters.
+    $command = "ffprobe -v error -select_streams a:0 -show_entries stream=duration -of default=noprint_wrappers=1:nokey=1 `"$file`""
+    $duration = Invoke-Command $command
+    return $duration
+}
+
+Function Remove-InvalidFileNameChars {
+  param(
+    [Parameter(Mandatory=$true,
+      Position=0,
+      ValueFromPipeline=$true,
+      ValueFromPipelineByPropertyName=$true)]
+    [String]$Name
+  )
+
+  $invalidChars = [IO.Path]::GetInvalidFileNameChars() -join ''
+  $re = "[{0}]" -f [RegEx]::Escape($invalidChars)
+  return ($Name -replace $re)
+}
+#endregion
 
 # If there are no subfolders use the base path
 $bookDirs = Get-ChildItem -Path $START_PATH -Recurse | ?{ $_.PSIsContainer }
-if ($bookDirs.count -lt 2) {
-    $bookDirs = $START_PATH
-}
+if ($bookDirs.count -lt 1) {$bookDirs = $START_PATH}
 
 $files = ""
 $firstRun = $true
@@ -130,27 +128,14 @@ $hasCoverArt = $false
 write-host "Processing`r`n$bookDirs"
 
 foreach ($bookDir in $bookDirs) {
-    if ($mp3s) {
-        $mp3s.Clear()
-    }
-
-    if ($bookDir.Fullname) {
-        $bookDir = $bookDir.FullName
-    }
-
-    if ($bookDir.EndsWith("\") -eq $true) {
-        $bookDir = "$bookDir"
-    }
-
-    if (!$TEMP_PATH) {
-        $TEMP_PATH = $bookDir
-    }
-
+    if ($mp3s) {$mp3s.Clear()}
+    if ($bookDir.Fullname) {$bookDir = $bookDir.FullName}
+    if ($bookDir.EndsWith("\") -eq $true) {$bookDir = "$bookDir"}
+    if (!$TEMP_PATH) {$TEMP_PATH = $bookDir}
     $album = $null
     
     Set-Location $bookDir
     $mp3s = Get-ChildItem $bookDir -Filter *.mp3
-#    $mp3s = Get-ChildItem $bookDir -Filter *.mp3 | Sort-Object -Property {$_.Name -as [int]}
     if ($mp3s) {
         $mp3sNameLength = Check-FileNameLengths $mp3s
 
@@ -183,17 +168,17 @@ foreach ($bookDir in $bookDirs) {
 
         Write-Host "Combining files."
         $command = ("ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
-        $command
+        Write-Host $command
         Invoke-Expression $Command
 
         Write-Host "Converting to m4b."
         $command = ("ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.2 -y `"$TEMP_PATH\$albumM4b`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
-        $command
+        Write-Host $command
         Invoke-Expression $Command | Out-Null
 
         $finalBook = Get-ChildItem "$TEMP_PATH\$albumM4b" 
         if ($hasCoverArt) {
-            write-host "Adding Cover Art"
+            Write-Host "Adding Cover Art"
             Get-ChildItem $finalBook | set-picture $hasCoverArt
         }
 
