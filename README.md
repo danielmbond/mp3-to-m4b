@@ -1,2 +1,3 @@
 # mp3-to-m4b
-Convert multiple mp3s to a single m4b with powershell, ffmpeg, and taglib
+This script will go through directories recursively and combine all of the
+mp3s in the directory into a single m4b with powershell, ffmpeg, and taglib.
