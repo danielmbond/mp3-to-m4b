@@ -7,6 +7,7 @@ $TEMP_PATH = "F:\temp"
 $DELETE_OLD_MP3 = $true
 $FFMPEG_ERROR_LEVEL = "-nostats -loglevel error"
 $GRAB_MISSING__ALBUM_ART_FROM_AUDIBLE = $true
+$MIN_NUMBER_MP3S = 50 # if there are fewer than this many mp3s in the directory skip it
 
 # If this is set to true and your files don't sort correctly your could get an out of 
 # order m4b.
@@ -119,7 +120,7 @@ Function Remove-InvalidFileNameChars {
 
 # If there are no subfolders use the base path
 $bookDirs = Get-ChildItem -Path $START_PATH -Recurse | ?{ $_.PSIsContainer }
-if ($bookDirs.count -lt 1) {$bookDirs = $START_PATH}
+if ($bookDirs.Count -lt 1) {$bookDirs = $START_PATH}
 
 $files = ""
 $firstRun = $true
@@ -128,7 +129,7 @@ $hasCoverArt = $false
 write-host "Processing`r`n$bookDirs"
 
 foreach ($bookDir in $bookDirs) {
-    if ($mp3s) {$mp3s.Clear()}
+    if ($mp3s) {$mp3s = $null}
     if ($bookDir.Fullname) {$bookDir = $bookDir.FullName}
     if ($bookDir.EndsWith("\") -eq $true) {$bookDir = "$bookDir"}
     if (!$TEMP_PATH) {$TEMP_PATH = $bookDir}
@@ -136,13 +137,14 @@ foreach ($bookDir in $bookDirs) {
     
     Set-Location $bookDir
     $mp3s = Get-ChildItem $bookDir -Filter *.mp3
-    if ($mp3s) {
+    if ($mp3s -and $mp3s.Count -ge $MIN_NUMBER_MP3S) {
         $mp3sNameLength = Check-FileNameLengths $mp3s
 
         if ($mp3sNameLength -ne $true) {
             Write-Host $mp3sNameLength
             if ($IGNORE_FILE_LENGTHS -eq $false) {
-                break;
+                $mp3s = $null
+                continue
             }
         }
 
@@ -179,7 +181,7 @@ foreach ($bookDir in $bookDirs) {
         $finalBook = Get-ChildItem "$TEMP_PATH\$albumM4b" 
         if ($hasCoverArt) {
             Write-Host "Adding Cover Art"
-            Get-ChildItem $finalBook | set-picture $hasCoverArt
+            Get-ChildItem $finalBook | set-picture $hasCoverArt | Out-Null
         }
 
         $finalBook | set-title $album
