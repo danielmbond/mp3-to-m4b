@@ -2,12 +2,13 @@ Clear-Host
 
 # ffmpeg needs to be in your path environment variable or you'll need to put the full path to it
 
-$START_PATH = "D:\books\"
+$START_PATH = "D:\books"
 $TEMP_PATH = "F:\temp"
+$CREATE_CHAPTERS = $true # doesn't work
 $DELETE_OLD_MP3 = $true
-$FFMPEG_ERROR_LEVEL = "-nostats -loglevel error"
+$FFMPEG_ERROR_LEVEL = "-nostats -loglevel fatal"
 $GRAB_MISSING__ALBUM_ART_FROM_AUDIBLE = $true
-$MIN_NUMBER_MP3S = 50 # if there are fewer than this many mp3s in the directory skip it
+$MIN_NUMBER_MP3S = 30 # if there are fewer than this many mp3s in the directory skip it
 
 # If this is set to true and your files don't sort correctly your could get an out of 
 # order m4b.
@@ -19,7 +20,8 @@ if ($env:PSModulePath) {
     if ($modules.Contains(";")) {
         $modules = $modules.Split(";")
         $MODULE_PATH = $modules[0]
-    } else {
+    }
+    else {
         $MODULE_PATH = $env:PSModulePath
     }
 }
@@ -29,9 +31,11 @@ $TAGLIB_PATH = "$MODULE_PATH\taglib"
 if ((Test-Path $TAGLIB_PATH) -eq $false) {
     try {
         Import-Module taglib -ErrorAction SilentlyContinue | Out-Null
-    } catch {
+    }
+    catch {
         Write-Host "Need to install the taglib module."
-    } finally {
+    }
+    finally {
         if ((Test-Path $MODULE_PATH) -eq $false) {
             New-Item -Path $MODULE_PATH -ItemType Directory
         }
@@ -67,26 +71,26 @@ Function Download-Pic-From-Audible([string]$searchterm) {
             $start = $line.IndexOf("data-lazy=`"")
             $end = $line.Length - $start - 1 
             $image = $line.Substring($start, $end)
-            $url = $image.Remove(0,11)
+            $url = $image.Remove(0, 11)
             break
         }
-    }    
+    }
     $Filename = [System.IO.Path]::GetFileName($url)
     $ext = $Filename.Remove(0, ($Filename.Length - 3))
     Invoke-WebRequest -Uri $url -OutFile "$TEMP_PATH\cover.$ext"
     if (Test-Path "$TEMP_PATH\cover.$ext") {
         return "$TEMP_PATH\cover.$ext"
-    } else {
+    }
+    else {
         return $false
     }
 }
 
 Function Get-File-Counts($location) {
     # Get count of files in directories.
-    # $location = "d:\books"
     set-location $location
     Remove-Item "$location\filecounts.txt"
-    $dirs = Get-ChildItem -recurse | ?{ $_.PSIsContainer } 
+    $dirs = Get-ChildItem -recurse | ? { $_.PSIsContainer } 
     foreach ($dir in $dirs) {
         $count = (Get-ChildItem $dir.FullName | Measure-Object).Count
         if ($count -gt 5) {
@@ -104,37 +108,45 @@ Function Get-MP3Duration($file) {
 }
 
 Function Remove-InvalidFileNameChars {
-  param(
-    [Parameter(Mandatory=$true,
-      Position=0,
-      ValueFromPipeline=$true,
-      ValueFromPipelineByPropertyName=$true)]
-    [String]$Name
-  )
+    param(
+        [Parameter(Mandatory = $true,
+            Position = 0,
+            ValueFromPipeline = $true,
+            ValueFromPipelineByPropertyName = $true)]
+        [String]$Name
+    )
 
-  $invalidChars = [IO.Path]::GetInvalidFileNameChars() -join ''
-  $re = "[{0}]" -f [RegEx]::Escape($invalidChars)
-  return ($Name -replace $re)
+    $invalidChars = [IO.Path]::GetInvalidFileNameChars() -join ''
+    $re = "[{0}]" -f [RegEx]::Escape($invalidChars)
+    return ($Name -replace $re)
 }
 #endregion
 
 # If there are no subfolders use the base path
-$bookDirs = Get-ChildItem -Path $START_PATH -Recurse | ?{ $_.PSIsContainer }
-if ($bookDirs.Count -lt 1) {$bookDirs = $START_PATH}
+$bookDirs = Get-ChildItem -Path $START_PATH -Recurse | ? { $_.PSIsContainer }
+if ($bookDirs.Count -lt 1) { $bookDirs = $START_PATH }
 
 $files = ""
-$firstRun = $true
+#$firstRun = $true
 $hasCoverArt = $false
 
 write-host "Processing`r`n$bookDirs"
 
 foreach ($bookDir in $bookDirs) {
-    if ($mp3s) {$mp3s = $null}
-    if ($bookDir.Fullname) {$bookDir = $bookDir.FullName}
-    if ($bookDir.EndsWith("\") -eq $true) {$bookDir = "$bookDir"}
-    if (!$TEMP_PATH) {$TEMP_PATH = $bookDir}
-    $album = $null
+    if ($mp3s) { $mp3s = $null }
+    if ($bookDir.Fullname) { $bookDir = $bookDir.FullName }
+    $bookDir = $bookDir.Trim("\")
+    if (!$TEMP_PATH) { $TEMP_PATH = $bookDir }
+
+    if ($CREATE_CHAPTERS) {
+        $ffmetatdataFile = $("$TEMP_PATH\chapters.txt")
+        if (Test-Path $ffmetatdataFile) { Remove-Item $ffmetatdataFile }
+        $chapterNumber = 1
+        $duration = 0
+        $previousDuration = 1
+    }
     
+    $album = $null
     Set-Location $bookDir
     $mp3s = Get-ChildItem $bookDir -Filter *.mp3
     if ($mp3s -and $mp3s.Count -ge $MIN_NUMBER_MP3S) {
@@ -153,7 +165,23 @@ foreach ($bookDir in $bookDirs) {
         $albumM4b = "$album.m4b"
         $mp3sList = $null
 
-        foreach ($i in $mp3s) {$mp3sList = "$mp3sList|$i"}
+        foreach ($i in $mp3s) {
+            $mp3sList = "$mp3sList|$i"
+            $duration = (Get-ChildItem $i.FullName | get-duration).TotalMilliseconds
+            $duration = $duration + $previousDuration
+            if ($CREATE_CHAPTERS) {
+                if ($chapterNumber -eq 1) { ";FFMETADATA1`r`n" | Out-File -Append $ffmetatdataFile }
+                "[CHAPTER]" | Out-File -Append $ffmetatdataFile
+                "TIMEBASE=1/1000" | Out-File -Append $ffmetatdataFile
+                "START=$previousDuration" | Out-File -Append $ffmetatdataFile
+                "END=$duration" | Out-File -Append $ffmetatdataFile
+                "title=Chapter $chapterNumber`r`n" | Out-File -Append $ffmetatdataFile
+                $chapterNumber++
+            }
+            $previousDuration = $duration
+        }
+        Copy-Item -Path $ffmetatdataFile -Destination $($bookDir.FullName + "\Chapters.txt")
+
         $mp3sList = $mp3sList.Trim("|")
 
         if (Test-Path "$TEMP_PATH\$albumMp3") {
@@ -161,20 +189,20 @@ foreach ($bookDir in $bookDirs) {
             break;
         }
 
-        Write-Host "Get cover art."
+        Write-Host "Get cover art - $bookDir"
         $hasCoverArt = ($mp3s[0] | save-picture "$TEMP_PATH\cover.jpg")
-        if($GRAB_MISSING__ALBUM_ART_FROM_AUDIBLE -and ($hasCoverArt -eq $false)) {
+        if ($GRAB_MISSING__ALBUM_ART_FROM_AUDIBLE -and ($hasCoverArt -eq $false)) {
             Write-Host "Getting cover art from Audible."
             $hasCoverArt = Download-Pic-From-Audible $album
         }
 
         Write-Host "Combining files."
-        $command = ("ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
+        $command = ("ffmpeg -i `"concat:$mp3sList`" -c:a copy `"$TEMP_PATH\$albumMp3`" $FFMPEG_ERROR_LEVEL").Replace("\\", "\")
         Write-Host $command
         Invoke-Expression $Command
-
+        
         Write-Host "Converting to m4b."
-        $command = ("ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.2 -y `"$TEMP_PATH\$albumM4b`" $FFMPEG_ERROR_LEVEL").Replace("\\","\")
+        $command = ("ffmpeg -fflags +igndts -i `"$TEMP_PATH\$albumMp3`" -vn -c:a aac -q:a 1.2 -y `"$TEMP_PATH\$albumM4b`" $FFMPEG_ERROR_LEVEL").Replace("\\", "\")
         Write-Host $command
         Invoke-Expression $Command | Out-Null
 
@@ -188,7 +216,7 @@ foreach ($bookDir in $bookDirs) {
         $finalBook | set-track 1 1
         $finalBook | set-disc 1 1
 
-    # Clean up
+        # Clean up
         if (Test-Path "$TEMP_PATH\$albumM4b") {
             Remove-Item "$TEMP_PATH\$albumMp3" 
             if ($DELETE_OLD_MP3) {
@@ -204,15 +232,18 @@ foreach ($bookDir in $bookDirs) {
                 Start-Sleep 5
                 try {
                     Remove-Item $hasCoverArt -ErrorAction Stop
-                } catch {
+                }
+                catch {
                     [System.GC]::Collect()
                     Write-Host "$hasCoverArt is locked."
                 }
             }
-        } else {
+        }
+        else {
             Write-Host "Cover art is missing for $bookDir\$albumM4b"
         }
-    } else {
+    }
+    else {
         Write-Host "Nothing to process in $bookDir."
     }
 }
